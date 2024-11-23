@@ -13,10 +13,10 @@ contract SendPackedUserOperation is Script{
 
     function run() public {}
 
-    function generateSignedUserOperation(bytes memory callData, HelperConfig.NetworkConfig memory config) public view returns(PackedUserOperation memory) {
+    function generateSignedUserOperation(bytes memory callData, HelperConfig.NetworkConfig memory config, address minimalAccount) public view returns(PackedUserOperation memory) {
         // 1. Generate unsigned user operation
-        uint256 nonce = vm.getNonce(config.account);
-        PackedUserOperation memory userOperation = _generatedSignedUserOperation(callData, config.account, nonce);
+        uint256 nonce = vm.getNonce(minimalAccount) - 1;
+        PackedUserOperation memory userOperation = _generatedSignedUserOperation(callData, minimalAccount, nonce);
 
         // 2. Get user operation Hash
         bytes32 userOpHash = IEntryPoint(config.entryPoint).getUserOpHash(userOperation);
@@ -26,7 +26,7 @@ contract SendPackedUserOperation is Script{
         uint8 v;
         bytes32 r;
         bytes32 s;
-        uint256 DEFAULT_ANVIL_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+        // uint256 DEFAULT_ANVIL_KEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
 
         if (block.chainid == 31337) {
             (v, r, s) = vm.sign(vm.envUint("DEFAULT_ANVIL_KEY"), digest);
