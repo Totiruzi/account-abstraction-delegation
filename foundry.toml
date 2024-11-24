@@ -5,7 +5,9 @@ libs = ["lib"]
 remappings = [
     "@account-abstraction/contracts=lib/account-abstraction/contracts",
     "@openzeppelin/contracts=lib/openzeppelin-contracts/contracts",
-    "@foundry/=lib/foundry-era-contracts/"
+    "@foundry/lib=lib/foundry-era-contracts/lib",
+    "@foundry/contracts=lib/foundry-era-contracts/src/system-contracts/contracts"
 ]
+is-system = true
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
