@@ -21,6 +21,7 @@ import {Utils} from "@foundry/contracts/libraries/Utils.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {console2} from "forge-std/console2.sol";
 
 /**
  * @title Account Abstraction Transaction (type 113)
@@ -53,21 +54,28 @@ contract ZkMinimalAccount is IAccount, Ownable {
     error ZkMinimalAccount__NotFromBootLoader();
     error ZkMinimalAccount__NotFromBootLoaderOrOwner();
     error ZkMinimalAccount__ExecutionFailed();
-    error ZkMinimalAccount__FailToPay();
+    error ZkMinimalAccount__FailToPayBootloader();
+    error ZkMinimalAccount__InvalidSignature();
 
     /**
      * MODIFIERS
      */
     modifier requireFromBootLoader() {
-        require(msg.sender == BOOTLOADER_FORMAL_ADDRESS, ZkMinimalAccount__NotFromBootLoader());
+        // require(msg.sender == BOOTLOADER_FORMAL_ADDRESS, ZkMinimalAccount__NotFromBootLoader());
+        if (msg.sender != BOOTLOADER_FORMAL_ADDRESS) {
+            revert ZkMinimalAccount__NotFromBootLoader();
+        }
         _;
     }
 
     modifier requireFromBootLoaderOrOwner() {
-        require(
-            msg.sender == BOOTLOADER_FORMAL_ADDRESS && msg.sender == owner(),
-            ZkMinimalAccount__NotFromBootLoaderOrOwner()
-        );
+        // require(
+        //     msg.sender == BOOTLOADER_FORMAL_ADDRESS && msg.sender == owner(),
+        //     ZkMinimalAccount__NotFromBootLoaderOrOwner()
+        // );
+        if (msg.sender != BOOTLOADER_FORMAL_ADDRESS && msg.sender != owner()) {
+            revert ZkMinimalAccount__NotFromBootLoaderOrOwner();
+        }
         _;
     }
 
@@ -75,6 +83,8 @@ contract ZkMinimalAccount is IAccount, Ownable {
      * FUNCTIONS
      */
     constructor() Ownable(msg.sender) {}
+
+    receive() external payable {}
 
     /**
      * EXTERNAL FUNCTIONS
@@ -101,6 +111,47 @@ contract ZkMinimalAccount is IAccount, Ownable {
          * 1. call nonceHolder
          * 2. increment the nonce
          */
+        _validateTransaction(_transaction);
+    }
+
+    function executeTransaction(bytes32, /*_txHash*/ bytes32, /*_suggestedSignedHash*/ Transaction memory _transaction)
+        external
+        payable
+        requireFromBootLoaderOrOwner
+    {
+        _executeTransaction(_transaction);
+    }
+
+    // There is no point in providing possible signed hash in the `executeTransactionFromOutside` method,
+    // since it typically should not be trusted.
+    function executeTransactionFromOutside(Transaction memory _transaction) external payable {
+        bytes4 magic = _validateTransaction(_transaction);
+        if (magic != ACCOUNT_VALIDATION_SUCCESS_MAGIC) {
+            revert ZkMinimalAccount__InvalidSignature();
+        }
+        _executeTransaction(_transaction);
+    }
+
+    function payForTransaction(bytes32 _txHash, bytes32 _suggestedSignedHash, Transaction memory _transaction)
+        external
+        payable
+    {
+        bool success = _transaction.payToTheBootloader();
+        // require(success, ZkMinimalAccount__FailToPayBootloader());
+         if (!success) {
+            revert ZkMinimalAccount__FailToPayBootloader();
+        }
+    }
+
+    function prepareForPaymaster(bytes32 _txHash, bytes32 _possibleSignedHash, Transaction memory _transaction)
+        external
+        payable
+    {}
+
+    /**
+     * INTERNAL FUNCTIONS
+     */
+    function _validateTransaction(Transaction memory _transaction) internal returns (bytes4 magic) {
         SystemContractsCaller.systemCallWithPropagatedRevert(
             uint32(gasleft()),
             address(NONCE_HOLDER_SYSTEM_CONTRACT),
@@ -110,30 +161,33 @@ contract ZkMinimalAccount is IAccount, Ownable {
 
         // Check for fee to pay
         uint256 totalRequiredBalance = _transaction.totalRequiredBalance();
-        // if (totalRequiredBalance > address(this).balance) revert ZkMinimalAccount__NotEnoughBalance();
-        require(address(this).balance > totalRequiredBalance, ZkMinimalAccount__NotEnoughBalance());
+        // require(address(this).balance > totalRequiredBalance, ZkMinimalAccount__NotEnoughBalance());
+        if (totalRequiredBalance > address(this).balance) revert ZkMinimalAccount__NotEnoughBalance();
 
         // Check the signature
         bytes32 txHash = _transaction.encodeHash();
-        bytes32 convertedHash = MessageHashUtils.toEthSignedMessageHash(txHash);
-        address signer = ECDSA.recover(convertedHash, _transaction.signature);
+        // bytes32 convertedHash = MessageHashUtils.toEthSignedMessageHash(txHash);
+        // address signer = ECDSA.recover(convertedHash, _transaction.signature);
+        address signer = ECDSA.recover(txHash, _transaction.signature);
+        console2.log("Signer: ",signer);
+        console2.log("Owner", owner());
+
         bool isValidSignature = signer == owner();
+
+        console2.log("isValidSignature: ", isValidSignature);
 
         if (isValidSignature) {
             magic = ACCOUNT_VALIDATION_SUCCESS_MAGIC;
+            console2.logBytes4(magic);
         } else {
             magic = bytes4(0);
         }
 
         // Return the magic number
-        return magic;
+        // return magic;
     }
 
-    function executeTransaction(bytes32, /*_txHash*/ bytes32, /*_suggestedSignedHash*/ Transaction memory _transaction)
-        external
-        payable
-        requireFromBootLoaderOrOwner
-    {
+    function _executeTransaction(Transaction memory _transaction) internal {
         address to = address(uint160(_transaction.to));
         uint128 value = Utils.safeCastToU128(_transaction.value);
         bytes memory data = _transaction.data;
@@ -147,28 +201,10 @@ contract ZkMinimalAccount is IAccount, Ownable {
             assembly {
                 success := call(gas(), to, value, add(data, 0x20), mload(data), 0, 0)
             }
-            require(success, ZkMinimalAccount__ExecutionFailed());
+            // require(success, ZkMinimalAccount__ExecutionFailed());
+            if (!success) {
+                revert ZkMinimalAccount__ExecutionFailed();
+            }
         }
     }
-
-    // There is no point in providing possible signed hash in the `executeTransactionFromOutside` method,
-    // since it typically should not be trusted.
-    function executeTransactionFromOutside(Transaction memory _transaction) external payable {}
-
-    function payForTransaction(bytes32 _txHash, bytes32 _suggestedSignedHash, Transaction memory _transaction)
-        external
-        payable
-    {
-        bool success = _transaction.payToTheBootloader();
-        require(success, ZkMinimalAccount__FailToPay());
-    }
-
-    function prepareForPaymaster(bytes32 _txHash, bytes32 _possibleSignedHash, Transaction memory _transaction)
-        external
-        payable
-    {}
-
-    /**
-     * INTERNAL FUNCTIONS
-     */
 }

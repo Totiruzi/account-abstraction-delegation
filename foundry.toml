@@ -9,5 +9,6 @@ remappings = [
     "@foundry/contracts=lib/foundry-era-contracts/src/system-contracts/contracts"
 ]
 is-system = true
+viaIR = true
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
